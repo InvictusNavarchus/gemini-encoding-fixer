@@ -2,7 +2,7 @@
 // @name         Fix Gemini Encoding
 // @namespace    http://tampermonkey.net/
 // @version      1.0
-// @description  Replaces literal text "<sub>[char]</sub>" with actual subscript characters
+// @description  Replaces literal text "<sub>[char]</sub>" with actual subscript characters and decodes UTF-8 hex sequences
 // @author       invictus
 // @match        https://gemini.google.com/app/*
 // @grant        none
@@ -64,7 +64,7 @@
 
     // Function to convert the matched content to subscript
     function convertToSubscript(match, content) {
-        log(`Converting: "${content}"`);
+        log(`Converting subscript: "${content}"`);
 
         let result = '';
         for (let i = 0; i < content.length; i++) {
@@ -75,34 +75,66 @@
         log(`Converted "${match}" to "${result}"`);
         return result;
     }
+    
+    // Function to decode UTF-8 hex sequences like <0xE2><0x82><0x99>
+    function decodeUtf8HexSequence(match) {
+        log(`Decoding UTF-8 hex: "${match}"`);
+        
+        // Extract all hex values
+        const hexValues = match.match(/<0x([0-9A-F]{2})>/gi).map(hex => 
+            parseInt(hex.substring(3, 5), 16)
+        );
+        
+        // Convert hex array to UTF-8 character
+        try {
+            // Create a buffer from the hex values and decode as UTF-8
+            const bytes = new Uint8Array(hexValues);
+            const decoder = new TextDecoder('utf-8');
+            const result = decoder.decode(bytes);
+            
+            log(`Decoded "${match}" to "${result}"`);
+            return result;
+        } catch (error) {
+            log(`Error decoding "${match}": ${error.message}`);
+            return match; // Return the original match if decoding fails
+        }
+    }
 
-    // Function to replace the literal <sub>[char]</sub> text in a text node
+    // Function to replace the literal <sub>[char]</sub> text and UTF-8 hex sequences in a text node
     function replaceInTextNode(textNode) {
         if (!textNode || !textNode.nodeValue) return;
 
         const text = textNode.nodeValue;
-        if (!text.includes('<sub>')) return;
+        if (!text.includes('<sub>') && !text.includes('<0x')) return;
 
         log(`Processing text node: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
         // Regex to match <sub>x</sub> as literal text
-        const regex = /<sub>([^<]+)<\/sub>/g;
+        const subRegex = /<sub>([^<]+)<\/sub>/g;
+        
+        // Regex to match UTF-8 hex sequences like <0xE2><0x82><0x99>
+        // This looks for consecutive hex byte patterns
+        const hexRegex = /(?:<0x[0-9A-F]{2}>)+/gi;
 
-        // If we find matches, replace them
-        if (regex.test(text)) {
-            // Reset regex (since we used test)
-            regex.lastIndex = 0;
-
-            // Replace all occurrences
-            const newText = text.replace(regex, (match, content) => {
+        // First replace subscript notation
+        let newText = text;
+        if (text.includes('<sub>')) {
+            newText = text.replace(subRegex, (match, content) => {
                 return convertToSubscript(match, content);
             });
+        }
+        
+        // Then replace UTF-8 hex sequences
+        if (text.includes('<0x')) {
+            newText = newText.replace(hexRegex, (match) => {
+                return decodeUtf8HexSequence(match);
+            });
+        }
 
-            // Only update if changes were made
-            if (newText !== text) {
-                log(`Replacing with: "${newText.substring(0, 50)}${newText.length > 50 ? '...' : ''}"`);
-                textNode.nodeValue = newText;
-            }
+        // Only update if changes were made
+        if (newText !== text) {
+            log(`Replacing with: "${newText.substring(0, 50)}${newText.length > 50 ? '...' : ''}"`);
+            textNode.nodeValue = newText;
         }
     }
 
@@ -168,16 +200,21 @@
         log("MutationObserver set up");
 
         // Add debug object to window
-        window._subscriptReplacer = {
+        window._geminiEncodingFixer = {
             processDocument: processDocument,
             replaceInText: (text) => {
-                return text.replace(/<sub>([^<]+)<\/sub>/g, convertToSubscript);
+                const subRegex = /<sub>([^<]+)<\/sub>/g;
+                const hexRegex = /(?:<0x[0-9A-F]{2}>)+/gi;
+                
+                let result = text.replace(subRegex, convertToSubscript);
+                result = result.replace(hexRegex, decodeUtf8HexSequence);
+                return result;
             },
             toggleDebug: () => {
-                window._subscriptReplacer.debug = !window._subscriptReplacer.debug;
+                window._geminiEncodingFixer.debug = !window._geminiEncodingFixer.debug;
                 // This assignment does nothing due to closure, but we keep it for API consistency
-                DEBUG = window._subscriptReplacer.debug;
-                log(`Debug mode ${window._subscriptReplacer.debug ? 'enabled' : 'disabled'}`);
+                DEBUG = window._geminiEncodingFixer.debug;
+                log(`Debug mode ${window._geminiEncodingFixer.debug ? 'enabled' : 'disabled'}`);
             },
             debug: DEBUG
         };
