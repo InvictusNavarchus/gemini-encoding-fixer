@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Fix Gemini Encoding
+// @name         Gemini Encoding Fixer
 // @namespace    http://tampermonkey.net/
 // @version      1.3.1
 // @description  Converts "<sub>[char]</sub>" to subscript characters and decodes UTF-8 hex sequences in Gemini chats
