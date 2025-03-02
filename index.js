@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0
 // @description  Replaces literal text "<sub>[char]</sub>" with actual subscript characters
-// @author       You
+// @author       invictus
 // @match        https://gemini.google.com/app/*
 // @grant        none
 // @run-at       document-idle
