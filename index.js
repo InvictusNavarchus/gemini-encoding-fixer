@@ -124,11 +124,36 @@
             });
         }
         
-        // Then replace UTF-8 hex sequences
+        // Then replace UTF-8 hex sequences, being careful with combining marks
         if (text.includes('<0x')) {
-            newText = newText.replace(hexRegex, (match) => {
-                return decodeUtf8HexSequence(match);
-            });
+            // We first need to do a complete scan to handle combining characters properly
+            // This approach processes the entire text at once to maintain character relationships
+            const processedChunks = [];
+            let lastIndex = 0;
+            let match;
+            
+            while ((match = hexRegex.exec(newText)) !== null) {
+                // Add text before the match
+                processedChunks.push(newText.substring(lastIndex, match.index));
+                
+                // Add the decoded hex sequence
+                const decoded = decodeUtf8HexSequence(match[0]);
+                processedChunks.push(decoded);
+                
+                lastIndex = match.index + match[0].length;
+            }
+            
+            // Add any remaining text
+            if (lastIndex < newText.length) {
+                processedChunks.push(newText.substring(lastIndex));
+            }
+            
+            // Join all the chunks
+            newText = processedChunks.join('');
+            
+            // Now normalize the string to ensure combining characters are properly applied
+            // This is essential for characters like <0xE2><0x81><0xAF> (macron)
+            newText = newText.normalize('NFC');
         }
 
         // Only update if changes were made
@@ -206,8 +231,25 @@
                 const subRegex = /<sub>([^<]+)<\/sub>/g;
                 const hexRegex = /(?:<0x[0-9A-F]{2}>)+/gi;
                 
+                // First handle subscripts
                 let result = text.replace(subRegex, convertToSubscript);
-                result = result.replace(hexRegex, decodeUtf8HexSequence);
+                
+                // Then handle hex sequences
+                const processedChunks = [];
+                let lastIndex = 0;
+                let match;
+                
+                while ((match = hexRegex.exec(result)) !== null) {
+                    processedChunks.push(result.substring(lastIndex, match.index));
+                    processedChunks.push(decodeUtf8HexSequence(match[0]));
+                    lastIndex = match.index + match[0].length;
+                }
+                
+                if (lastIndex < result.length) {
+                    processedChunks.push(result.substring(lastIndex));
+                }
+                
+                result = processedChunks.join('').normalize('NFC');
                 return result;
             },
             toggleDebug: () => {
