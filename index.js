@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fix Gemini Encoding
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Replaces literal text "<sub>[char]</sub>" with actual subscript characters and decodes UTF-8 hex sequences
 // @author       invictus
 // @match        https://gemini.google.com/app/*
