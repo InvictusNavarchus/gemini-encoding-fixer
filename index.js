@@ -18,9 +18,9 @@
     function log(message, data) {
         if (!DEBUG) return;
         if (data !== undefined) {
-            console.log(`[Subscript Replacer] ${message}`, data);
+            console.log(`[Gemini Encoding Fixer] ${message}`, data);
         } else {
-            console.log(`[Subscript Replacer] ${message}`);
+            console.log(`[Gemini Encoding Fixer] ${message}`);
         }
     }
 
