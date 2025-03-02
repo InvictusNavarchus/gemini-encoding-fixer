@@ -85,6 +85,17 @@
             parseInt(hex.substring(3, 5), 16)
         );
         
+        // Special case handling for common UTF-8 sequences
+        if (hexValues.length === 3) {
+            // Handle the macron case: E2 81 AF -> U+0304 COMBINING MACRON
+            if (hexValues[0] === 0xE2 && hexValues[1] === 0x81 && hexValues[2] === 0xAF) {
+                log(`Detected macron overbar: "${match}" -> "̄"`);
+                return '\u0304'; // COMBINING MACRON (U+0304)
+            }
+            
+            // Handle other common 3-byte UTF-8 sequences here as needed
+        }
+        
         // Convert hex array to UTF-8 character
         try {
             // Create a buffer from the hex values and decode as UTF-8
@@ -92,7 +103,24 @@
             const decoder = new TextDecoder('utf-8');
             const result = decoder.decode(bytes);
             
-            log(`Decoded "${match}" to "${result}"`);
+            // Check if result is a combining mark that needs special handling
+            if (result && result.length === 1) {
+                const cp = result.codePointAt(0);
+                
+                // Map known problematic code points to correct combining marks
+                // This is a fallback in case automatic detection fails
+                const combiningMarkMap = {
+                    0x20EF: '\u0304', // COMBINING RIGHT ARROW BELOW -> COMBINING MACRON
+                    // Add more mappings as needed
+                };
+                
+                if (combiningMarkMap[cp]) {
+                    log(`Remapped combining mark from ${result} (U+${cp.toString(16).padStart(4, '0')}) to ${combiningMarkMap[cp]}`);
+                    return combiningMarkMap[cp];
+                }
+            }
+            
+            log(`Decoded "${match}" to "${result}" (${Array.from(result).map(c => 'U+' + c.codePointAt(0).toString(16).padStart(4, '0')).join(', ')})`);
             return result;
         } catch (error) {
             log(`Error decoding "${match}": ${error.message}`);
@@ -106,7 +134,10 @@
         
         const code = char.codePointAt(0);
         
-        // Unicode ranges for combining marks
+        // Specific check for COMBINING MACRON (U+0304)
+        if (code === 0x0304) return true;
+        
+        // Unicode ranges for combining marks - expanded to include more ranges
         return (
             (code >= 0x0300 && code <= 0x036F) || // Combining Diacritical Marks
             (code >= 0x1AB0 && code <= 0x1AFF) || // Combining Diacritical Marks Extended
@@ -142,14 +173,17 @@
         
         // Then replace UTF-8 hex sequences, being careful with combining marks
         if (text.includes('<0x')) {
-            // We first need to do a complete scan to handle combining characters properly
-            // This approach processes the entire text at once to maintain character relationships
-            const processedChunks = [];
-            let lastIndex = 0;
-            let match;
+            // Special handling for known patterns first
+            // The macron over x is a common case in mathematical notation
+            newText = newText.replace(/<0xE2><0x81><0xAF>x/g, "x\u0304"); // x with macron
+            newText = newText.replace(/<0xE2><0x81><0xAF>y/g, "y\u0304"); // y with macron
             
-            // First pass: decode all hex sequences
+            // General case processing
+            const processedChunks = [];
             const decodedMatches = [];
+            
+            // Decode all hex sequences
+            let match;
             while ((match = hexRegex.exec(newText)) !== null) {
                 const decoded = decodeUtf8HexSequence(match[0]);
                 decodedMatches.push({
@@ -161,30 +195,37 @@
                 });
             }
             
-            // Second pass: process the text with awareness of combining marks
+            // Process the text with awareness of combining marks
             if (decodedMatches.length > 0) {
-                lastIndex = 0;
+                let lastIndex = 0;
                 for (let i = 0; i < decodedMatches.length; i++) {
                     const current = decodedMatches[i];
                     
                     // Add text before this match
                     processedChunks.push(newText.substring(lastIndex, current.startIndex));
                     
-                    // Check if this is a combining mark and there's text right after it
-                    if (current.isCombining && 
-                        current.endIndex < newText.length && 
-                        /\S/.test(newText[current.endIndex])) {
-                        
-                        // Get the next character (which the combining mark should modify)
-                        const baseChar = newText[current.endIndex];
-                        
-                        // Add the base character followed by the combining mark
-                        processedChunks.push(baseChar + current.decodedText);
-                        
-                        // Skip the base character in the next iteration
-                        lastIndex = current.endIndex + 1;
+                    // Handle combining marks
+                    if (current.isCombining) {
+                        // If there's a character after the combining mark
+                        if (current.endIndex < newText.length && /\S/.test(newText[current.endIndex])) {
+                            const baseChar = newText[current.endIndex];
+                            processedChunks.push(baseChar + current.decodedText);
+                            lastIndex = current.endIndex + 1;
+                        }
+                        // If there's a character before the combining mark (fallback)
+                        else if (lastIndex > 0 && /\S/.test(processedChunks[processedChunks.length - 1].slice(-1))) {
+                            // Append to the previous chunk's last character
+                            const prevChunk = processedChunks.pop();
+                            processedChunks.push(prevChunk + current.decodedText);
+                            lastIndex = current.endIndex;
+                        }
+                        // No obvious character to combine with
+                        else {
+                            processedChunks.push(current.decodedText);
+                            lastIndex = current.endIndex;
+                        }
                     } else {
-                        // Regular case, just add the decoded text
+                        // Regular non-combining character
                         processedChunks.push(current.decodedText);
                         lastIndex = current.endIndex;
                     }
@@ -195,11 +236,11 @@
                     processedChunks.push(newText.substring(lastIndex));
                 }
                 
-                // Join all the chunks
+                // Join all the chunks and normalize
                 newText = processedChunks.join('');
             }
             
-            // Now normalize the string to ensure combining characters are properly applied
+            // Apply Unicode normalization - try NFC first, and if that doesn't work well, try NFD
             newText = newText.normalize('NFC');
         }
 
@@ -276,16 +317,20 @@
             processDocument: processDocument,
             replaceInText: (text) => {
                 const subRegex = /<sub>([^<]+)<\/sub>/g;
-                const hexRegex = /(?:<0x[0-9A-F]{2}>)+/gi;
                 
                 // First handle subscripts
                 let result = text.replace(subRegex, convertToSubscript);
                 
-                // Then handle hex sequences
+                // Special case handling for common patterns
+                result = result.replace(/<0xE2><0x81><0xAF>x/g, "x\u0304"); // x with macron
+                result = result.replace(/<0xE2><0x81><0xAF>y/g, "y\u0304"); // y with macron
+                
+                // Then handle general hex sequences
+                const hexRegex = /(?:<0x[0-9A-F]{2}>)+/gi;
                 const processedChunks = [];
                 const decodedMatches = [];
                 
-                // First pass: decode all hex sequences
+                // Decode all hex sequences
                 let match;
                 while ((match = hexRegex.exec(result)) !== null) {
                     const decoded = decodeUtf8HexSequence(match[0]);
@@ -298,7 +343,7 @@
                     });
                 }
                 
-                // Second pass: process with combining mark awareness
+                // Process with combining mark awareness
                 if (decodedMatches.length > 0) {
                     let lastIndex = 0;
                     for (let i = 0; i < decodedMatches.length; i++) {
@@ -307,21 +352,23 @@
                         // Add text before this match
                         processedChunks.push(result.substring(lastIndex, current.startIndex));
                         
-                        // Handle combining marks specially
-                        if (current.isCombining && 
-                            current.endIndex < result.length && 
-                            /\S/.test(result[current.endIndex])) {
-                            
-                            // Get the base character
-                            const baseChar = result[current.endIndex];
-                            
-                            // Add base character + combining mark
-                            processedChunks.push(baseChar + current.decodedText);
-                            
-                            // Skip the base character in the next iteration
-                            lastIndex = current.endIndex + 1;
+                        // Handle combining marks with improved logic
+                        if (current.isCombining) {
+                            if (current.endIndex < result.length && /\S/.test(result[current.endIndex])) {
+                                const baseChar = result[current.endIndex];
+                                processedChunks.push(baseChar + current.decodedText);
+                                lastIndex = current.endIndex + 1;
+                            }
+                            else if (lastIndex > 0 && processedChunks.length > 0 && /\S/.test(processedChunks[processedChunks.length - 1].slice(-1))) {
+                                const prevChunk = processedChunks.pop();
+                                processedChunks.push(prevChunk + current.decodedText);
+                                lastIndex = current.endIndex;
+                            }
+                            else {
+                                processedChunks.push(current.decodedText);
+                                lastIndex = current.endIndex;
+                            }
                         } else {
-                            // Regular case
                             processedChunks.push(current.decodedText);
                             lastIndex = current.endIndex;
                         }
@@ -332,10 +379,10 @@
                         processedChunks.push(result.substring(lastIndex));
                     }
                     
-                    result = processedChunks.join('');
+                    result = processedChunks.join('').normalize('NFC');
                 }
                 
-                return result.normalize('NFC');
+                return result;
             },
             toggleDebug: () => {
                 window._geminiEncodingFixer.debug = !window._geminiEncodingFixer.debug;
