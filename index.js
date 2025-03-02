@@ -4,7 +4,7 @@
 // @version      1.0
 // @description  Replaces literal text "<sub>[char]</sub>" with actual subscript characters
 // @author       You
-// @match        *://*/*
+// @match        https://gemini.google.com/app/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
